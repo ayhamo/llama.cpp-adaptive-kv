@@ -1,0 +1,68 @@
+name: Build llama-server (Windows, CUDA, RTX 50)
+
+# Builds llama-server.exe with adaptive KV streaming for Blackwell (sm_120) cards
+# and packs it together with the CUDA runtime DLLs so it runs with just the driver.
+on:
+  workflow_dispatch:
+    inputs:
+      fa_quants:
+        description: 'GGML_CUDA_FA_QUANTS (all, or a list like f16-f16;q8_0-q4_0;q8_0-q8_0)'
+        required: false
+        default: 'all'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 340
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v6
+
+      - name: Install Cuda Toolkit
+        uses: ./.github/actions/windows-setup-cuda
+        with:
+          cuda_version: '13.4'
+          cuda_arch: x64
+
+      - name: Install Ninja
+        run: |
+          choco install ninja
+
+      - name: Build
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake -S . -B build -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DGGML_NATIVE=OFF ^
+            -DGGML_CUDA=ON ^
+            -DCMAKE_CUDA_ARCHITECTURES=120 ^
+            -DGGML_CUDA_FA_QUANTS="${{ inputs.fa_quants }}" ^
+            -DGGML_CUDA_CCCL_VERSION=v3.4.3 ^
+            -DLLAMA_BUILD_BORINGSSL=ON
+          if errorlevel 1 exit /b 1
+          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%
+          cmake --build build --config Release -j %NINJA_JOBS% --target llama-server
+
+      - name: Pack
+        run: |
+          $dst = '.\dist\llama-server-adaptive-kv-win-cuda13-sm120'
+          New-Item -ItemType Directory -Force $dst | Out-Null
+          Copy-Item .\build\bin\*.exe, .\build\bin\*.dll $dst -ErrorAction SilentlyContinue
+          robocopy "${{ env.CUDA_PATH }}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          robocopy "${{ env.CUDA_PATH }}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          Copy-Item .\benchmarks\find-max-arena.py $dst -ErrorAction SilentlyContinue
+          git rev-parse HEAD | Out-File "$dst\COMMIT.txt"
+          Get-ChildItem $dst | Format-Table Name, Length
+          if (-not (Test-Path "$dst\llama-server.exe")) { throw "llama-server.exe missing" }
+          exit 0
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: llama-server-adaptive-kv-win-cuda13-sm120
+          path: dist/llama-server-adaptive-kv-win-cuda13-sm120
