@@ -131,11 +131,14 @@ jobs:
           sha="${{ needs.check.outputs.upstream_sha }}"
           subject=$(gh api "repos/$UPSTREAM_REPO/commits/$sha" --jq '.commit.message | split("\n")[0]')
           date=$(gh api "repos/$UPSTREAM_REPO/commits/$sha" --jq '.commit.committer.date[0:10]')
+          # Tag Raymond's commit, not this fork's: GitHub orders releases by the tagged
+          # commit's date, and the fork commit never changes, so releases came out unsorted.
           gh release create "${{ needs.check.outputs.tag }}" dist/llama-server-adaptive-kv-win-cuda13-sm120.zip \
-            -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            -R "$GITHUB_REPOSITORY" --target "$sha" --latest \
             --title "llama-server adaptive KV ($date, upstream ${sha:0:12})" \
             --notes "Windows CUDA 13.4 build of llama-server with adaptive KV streaming, for RTX 50 cards (sm_120).
           Static build: unzip next to the start script; it needs only the NVIDIA driver.
 
           Upstream commit: https://github.com/$UPSTREAM_REPO/commit/$sha
           Upstream change: $subject"
+
